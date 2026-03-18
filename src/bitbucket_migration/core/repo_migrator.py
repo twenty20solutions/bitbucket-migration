@@ -313,18 +313,24 @@ class RepoMigrator(BaseMigrator):
 
             # Second pass: update PR content with rewritten links
             if not self.config.options.skip_prs:
-                for bb_pr in bb_prs:
+                total_prs_pass2 = len(bb_prs)
+                self.logger.info("="*80)
+                self.logger.info(f"PHASE 3: Updating content and comments for {total_prs_pass2} PRs")
+                self.logger.info("="*80)
+                for pr_pass2_index, bb_pr in enumerate(bb_prs, 1):
                     gh_number = self.state.mappings.prs.get(bb_pr['id'])
                     if gh_number:
                         # Find the corresponding pr_record to determine if it's a PR or issue
                         pr_record = next((r for r in pr_records if r['bb_number'] == bb_pr['id']), None)
                         if pr_record:
+                            self.logger.info(f"[{pr_pass2_index}/{total_prs_pass2}] Updating PR #{bb_pr['id']} → Issue #{gh_number}")
+
                             # Resume support: skip comment update if already populated
                             if 'Already migrated (resumed)' in pr_record.get('remarks', []):
                                 try:
                                     existing_comments = self.environment.clients.gh.get_comments(gh_number)
                                     if existing_comments:
-                                        self.logger.info(f"  ⏭️  Issue #{gh_number} (PR #{bb_pr['id']}) already has {len(existing_comments)} comments — skipping")
+                                        self.logger.info(f"  ⏭️  Already has {len(existing_comments)} comments — skipping")
                                         pr_record['comments'] = len(existing_comments)
                                         continue
                                 except Exception:

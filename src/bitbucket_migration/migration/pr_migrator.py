@@ -120,14 +120,15 @@ class PullRequestMigrator:
         except Exception as e:
             self.logger.warning(f"  Could not check for existing issues (proceeding without resume): {e}")
 
-        for bb_pr in bb_prs:
+        total_prs = len(bb_prs)
+        for pr_index, bb_pr in enumerate(bb_prs, 1):
             pr_num = bb_pr['id']
             pr_state = bb_pr.get('state', 'UNKNOWN')
             title = bb_pr.get('title', f'PR #{pr_num}')
             source_branch = bb_pr.get('source', {}).get('branch', {}).get('name')
             dest_branch = bb_pr.get('destination', {}).get('branch', {}).get('name', 'main')
 
-            self.logger.info(f"Migrating PR #{pr_num} ({pr_state}): {title}")
+            self.logger.info(f"[{pr_index}/{total_prs}] Migrating PR #{pr_num} ({pr_state}): {title}")
             self.logger.info(f"  Source: {source_branch} -> Destination: {dest_branch}")
 
             # Resume support: skip if this PR was already migrated
