@@ -155,10 +155,14 @@ class Auditor:
         """Fetch all repository data using BitbucketClient."""
         self.logger.info("📥 Fetching repository data...")
 
-        # Fetch issues
+        # Fetch issues (may be disabled on some repos — 403 is OK)
         self.logger.info("   Fetching issues...")
-        self.issues = self.bb_client.get_issues()
-        self.logger.info(f"   ✓ Found {len(self.issues)} issues")
+        try:
+            self.issues = self.bb_client.get_issues()
+            self.logger.info(f"   ✓ Found {len(self.issues)} issues")
+        except (APIError, AuthenticationError) as e:
+            self.logger.warning(f"   ⚠️  Could not fetch issues (issue tracker may be disabled): {e}")
+            self.issues = []
 
         # Collect unique issue types (kinds)
         self.logger.info("   Collecting issue types...")

@@ -319,6 +319,17 @@ class RepoMigrator(BaseMigrator):
                         # Find the corresponding pr_record to determine if it's a PR or issue
                         pr_record = next((r for r in pr_records if r['bb_number'] == bb_pr['id']), None)
                         if pr_record:
+                            # Resume support: skip comment update if already populated
+                            if 'Already migrated (resumed)' in pr_record.get('remarks', []):
+                                try:
+                                    existing_comments = self.environment.clients.gh.get_comments(gh_number)
+                                    if existing_comments:
+                                        self.logger.info(f"  ⏭️  Issue #{gh_number} (PR #{bb_pr['id']}) already has {len(existing_comments)} comments — skipping")
+                                        pr_record['comments'] = len(existing_comments)
+                                        continue
+                                except Exception:
+                                    pass  # If we can't check, proceed with update
+
                             as_pr = pr_record['gh_type'] == 'PR'
                             self.pr_migrator.update_pr_content(bb_pr, gh_number, as_pr)
                             self.pr_migrator.update_pr_comments(bb_pr, gh_number, as_pr)

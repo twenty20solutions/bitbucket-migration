@@ -98,6 +98,28 @@ class PullRequestMigrator:
             self.logger.info("No pull requests to migrate")
             return []
 
+        # Resume support: fetch existing GitHub issues to detect already-migrated PRs.
+        # PRs are migrated as issues with title "[PR #N] ...", so we match by title prefix.
+        existing_gh_issues = {}
+        try:
+            self.logger.info("Checking for previously migrated PRs (resume support)...")
+            all_issues = self.environment.clients.gh.list_issues(state='all')
+            for gh_num, gh_issue in all_issues.items():
+                title = gh_issue.get('title', '')
+                # Match titles like "[PR #42] Some title"
+                if title.startswith('[PR #'):
+                    try:
+                        bb_num = int(title.split(']')[0].replace('[PR #', ''))
+                        existing_gh_issues[bb_num] = gh_issue
+                    except (ValueError, IndexError):
+                        pass
+            if existing_gh_issues:
+                self.logger.info(f"  Found {len(existing_gh_issues)} previously migrated PR(s) — will skip these")
+            else:
+                self.logger.info("  No previously migrated PRs found — fresh migration")
+        except Exception as e:
+            self.logger.warning(f"  Could not check for existing issues (proceeding without resume): {e}")
+
         for bb_pr in bb_prs:
             pr_num = bb_pr['id']
             pr_state = bb_pr.get('state', 'UNKNOWN')
@@ -107,6 +129,36 @@ class PullRequestMigrator:
 
             self.logger.info(f"Migrating PR #{pr_num} ({pr_state}): {title}")
             self.logger.info(f"  Source: {source_branch} -> Destination: {dest_branch}")
+
+            # Resume support: skip if this PR was already migrated
+            if pr_num in existing_gh_issues:
+                gh_issue = existing_gh_issues[pr_num]
+                gh_number = gh_issue['number']
+                self.logger.info(f"  ⏭️  Already migrated as Issue #{gh_number} — skipping")
+                self.state.mappings.prs[pr_num] = gh_number
+
+                author = bb_pr.get('author', {}).get('display_name', 'Unknown') if bb_pr.get('author') else 'Unknown (deleted user)'
+                gh_author = self.user_mapper.map_user(author) if author != 'Unknown (deleted user)' else None
+
+                self.state.pr_records.append({
+                    'bb_number': pr_num,
+                    'gh_number': gh_number,
+                    'gh_type': 'Issue',
+                    'title': title,
+                    'author': author,
+                    'gh_author': gh_author,
+                    'state': pr_state,
+                    'source_branch': source_branch or 'unknown',
+                    'dest_branch': dest_branch or 'unknown',
+                    'comments': 0,
+                    'attachments': 0,
+                    'links_rewritten': 0,
+                    'bb_url': bb_pr.get('links', {}).get('html', {}).get('href', ''),
+                    'gh_url': f"https://github.com/{self.environment.clients.gh.owner}/{self.environment.clients.gh.repo}/issues/{gh_number}",
+                    'remarks': ['Already migrated (resumed)']
+                })
+                self.state.pr_migration_stats['prs_as_issues'] += 1
+                continue
 
             # Strategy: Only OPEN PRs become GitHub PRs (safest approach)
             if pr_state == 'OPEN':
@@ -705,6 +757,17 @@ class PullRequestMigrator:
             as_pr: If True, update as PR; else as issue
         """
         pr_num = bb_pr['id']
+
+        # Resume support: check if this issue already has real content (not just the placeholder)
+        try:
+            existing = self.environment.clients.gh.get_issue(gh_number)
+            existing_body = existing.get('body', '') or ''
+            placeholder = f"Migrating PR #{pr_num}"
+            if existing_body and not existing_body.startswith(placeholder):
+                self.logger.info(f"  ⏭️  Issue #{gh_number} already has content — skipping body update")
+                return
+        except Exception:
+            pass  # If we can't check, proceed with update
 
         # Format and update PR or issue body
         formatter = self.formatter_factory.get_pull_request_formatter()

@@ -504,10 +504,11 @@ class BitbucketClient:
             response.raise_for_status()
 
             if detailed:
-                # Test issues endpoint
+                # Test issues endpoint (may be disabled on some repos — 403 is OK)
                 issues_url = f"{self.base_url}/issues"
                 issues_response = self.session.get(issues_url)
-                issues_response.raise_for_status()
+                if issues_response.status_code not in (200, 403):
+                    issues_response.raise_for_status()
 
                 # Test pull requests endpoint
                 prs_url = f"{self.base_url}/pullrequests"

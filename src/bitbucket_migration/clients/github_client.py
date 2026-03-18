@@ -623,6 +623,55 @@ class GitHubClient:
         except Exception as e:
             raise APIError(f"Unexpected error fetching GitHub pull request: {e}")
     
+    def list_issues(self, state: str = 'all', labels: Optional[str] = None) -> Dict[int, Dict[str, Any]]:
+        """
+        List all issues in the repository, returning a dict keyed by issue number.
+
+        Handles pagination automatically. Useful for resume/idempotency checks.
+
+        Args:
+            state: Filter by state ('open', 'closed', 'all')
+            labels: Comma-separated label names to filter by
+
+        Returns:
+            Dict mapping issue number to issue data
+        """
+        if self.dry_run:
+            return {}
+
+        issues = {}
+        page = 1
+        per_page = 100
+
+        while True:
+            params = f"state={state}&per_page={per_page}&page={page}"
+            if labels:
+                params += f"&labels={labels}"
+
+            try:
+                response = self._make_request_with_retry('GET', f"{self.base_url}/issues?{params}")
+                response.raise_for_status()
+                page_issues = response.json()
+
+                if not page_issues:
+                    break
+
+                for issue in page_issues:
+                    # GitHub API returns PRs in the issues endpoint too; skip them
+                    if 'pull_request' not in issue:
+                        issues[issue['number']] = issue
+
+                page += 1
+
+            except requests.exceptions.HTTPError as e:
+                if e.response.status_code in (401, 403):
+                    raise AuthenticationError("GitHub API access forbidden. Please check your token permissions.")
+                raise APIError(f"GitHub API error listing issues: {e}", status_code=e.response.status_code)
+            except requests.exceptions.RequestException as e:
+                raise NetworkError(f"Network error listing GitHub issues: {e}")
+
+        return issues
+
     def get_issue(self, issue_number: int) -> Dict[str, Any]:
         """
         Get details of a GitHub issue.
