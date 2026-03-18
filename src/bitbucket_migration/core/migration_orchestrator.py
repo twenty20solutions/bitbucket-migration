@@ -7,6 +7,8 @@ migration of multiple repositories using a unified configuration.
 
 from typing import List, Optional
 from pathlib import Path
+import csv
+import os
 
 from ..config.migration_config import (
     MigrationConfig,
@@ -260,6 +262,10 @@ class MigrationOrchestrator(BaseOrchestrator):
                     'output_dir': str(output_dir)
                 }
 
+                # Append to migration URL mapping file (for Bitbucket deletion/redirect)
+                if not self.dry_run:
+                    self._append_migration_url(repo_config)
+
                 self.logger.info(f"✅ Successfully performed {subcommand} for {repo_config.bitbucket_repo}")
                 self.logger.info("")
 
@@ -278,6 +284,43 @@ class MigrationOrchestrator(BaseOrchestrator):
         # Print summary
         self._print_migration_summary()
     
+
+    def _append_migration_url(self, repo_config: RepositoryConfig) -> None:
+        """
+        Append a row to migration_urls.csv mapping Bitbucket → GitHub URLs.
+
+        This file is used later for the Bitbucket deletion/redirect process.
+        Each row contains: workspace, bitbucket_repo, bitbucket_url, github_repo, github_url, status
+        """
+        csv_path = self.base_dir_manager.base_dir / "migration_urls.csv"
+        write_header = not csv_path.exists()
+
+        workspace = self.config.bitbucket.workspace
+        bb_repo = repo_config.bitbucket_repo
+        gh_repo = repo_config.github_repo
+        gh_owner = self.config.github.owner
+
+        row = {
+            'workspace': workspace,
+            'bitbucket_repo': bb_repo,
+            'bitbucket_url': f"https://bitbucket.org/{workspace}/{bb_repo}",
+            'bitbucket_git_url': f"git@bitbucket.org:{workspace}/{bb_repo}.git",
+            'github_repo': gh_repo,
+            'github_url': f"https://github.com/{gh_owner}/{gh_repo}",
+            'github_git_url': f"git@github.com:{gh_owner}/{gh_repo}.git",
+            'status': 'migrated'
+        }
+
+        try:
+            with open(csv_path, 'a', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=row.keys())
+                if write_header:
+                    writer.writeheader()
+                writer.writerow(row)
+            self.logger.info(f"  Appended migration URL mapping to {csv_path}")
+        except Exception as e:
+            self.logger.warning(f"  Could not write migration URL mapping: {e}")
+
 
 class CrossLinkOrchestrator(BaseOrchestrator):
 
