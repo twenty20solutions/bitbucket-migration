@@ -362,17 +362,31 @@ class RepoMigrator(BaseMigrator):
 
             # Second pass: update PR content with rewritten links
             if not self.config.options.skip_prs:
+                import time as _time
                 total_prs_pass2 = len(bb_prs)
                 self.logger.info("="*80)
                 self.logger.info(f"PHASE 3: Updating content and comments for {total_prs_pass2} PRs")
                 self.logger.info("="*80)
+                _phase3_start = _time.time()
+                _phase3_processed = 0
                 for pr_pass2_index, bb_pr in enumerate(bb_prs, 1):
                     gh_number = self.state.mappings.prs.get(bb_pr['id'])
                     if gh_number:
                         # Find the corresponding pr_record to determine if it's a PR or issue
                         pr_record = next((r for r in pr_records if r['bb_number'] == bb_pr['id']), None)
                         if pr_record:
-                            self.logger.info(f"[{pr_pass2_index}/{total_prs_pass2}] Updating PR #{bb_pr['id']} → Issue #{gh_number}")
+                            # ETA calculation
+                            _phase3_processed += 1
+                            _elapsed = _time.time() - _phase3_start
+                            _remaining_items = total_prs_pass2 - pr_pass2_index
+                            if _phase3_processed > 1 and _elapsed > 0:
+                                _avg_per_item = _elapsed / _phase3_processed
+                                _eta_seconds = int(_remaining_items * _avg_per_item)
+                                _eta_min, _eta_sec = divmod(_eta_seconds, 60)
+                                _eta_str = f" — ETA: {_eta_min}m{_eta_sec:02d}s"
+                            else:
+                                _eta_str = ""
+                            self.logger.info(f"[{pr_pass2_index}/{total_prs_pass2}] Updating PR #{bb_pr['id']} → Issue #{gh_number}{_eta_str}")
 
                             # Resume support: skip comment update if already populated
                             if 'Already migrated (resumed)' in pr_record.get('remarks', []):
