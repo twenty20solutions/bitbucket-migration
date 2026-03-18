@@ -6,8 +6,9 @@ the entire migration process, delegating to specialized migrators and
 handling overall workflow.
 """
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Callable
 from pathlib import Path
+import os
 
 from ..clients.bitbucket_client import BitbucketClient
 from ..clients.github_client import GitHubClient
@@ -48,6 +49,50 @@ class BaseMigrator:
 
         # Initialize infrastructure
         self._init_logger()
+
+    def _build_token_refresh_callback(self) -> Optional[Callable[[], str]]:
+        """
+        Build a callback to refresh GitHub App installation tokens.
+
+        Reads GH_APP_ID, GH_APP_INSTALL_ID, and GH_APP_PEM_PATH from env vars.
+        Returns None if these aren't set (i.e., using a PAT, not an app token).
+        """
+        app_id = os.environ.get('GH_APP_ID')
+        install_id = os.environ.get('GH_APP_INSTALL_ID')
+        pem_path = os.environ.get('GH_APP_PEM_PATH')
+
+        if not (app_id and install_id and pem_path):
+            return None
+
+        def refresh() -> str:
+            import time
+            try:
+                import jwt
+                import requests as req
+            except ImportError:
+                return ''
+
+            with open(pem_path) as f:
+                key = f.read()
+
+            payload = {
+                'iat': int(time.time()) - 60,
+                'exp': int(time.time()) + 540,
+                'iss': int(app_id)
+            }
+            jwt_token = jwt.encode(payload, key, algorithm='RS256')
+            resp = req.post(
+                f'https://api.github.com/app/installations/{install_id}/access_tokens',
+                headers={'Authorization': f'Bearer {jwt_token}', 'Accept': 'application/vnd.github+json'}
+            )
+            data = resp.json()
+            token = data.get('token', '')
+            if token:
+                # Also update the config so other components see the new token
+                self.config.github.token = token
+            return token
+
+        return refresh
 
     def _init_logger(self) -> None:
         """
@@ -156,11 +201,15 @@ class RepoMigrator(BaseMigrator):
             dry_run=self.dry_run
         )
 
+        # Build token refresh callback for GitHub App tokens (ghs_)
+        token_refresh_cb = self._build_token_refresh_callback()
+
         self.environment.clients.gh = GitHubClient(
             owner=self.config.github.owner,
             repo=self.config.github.repo,
             token=self.config.github.token,
-            dry_run=self.dry_run
+            dry_run=self.dry_run,
+            token_refresh_callback=token_refresh_cb
         )
 
         # Fetch issue type mapping for organization repositories

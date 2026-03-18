@@ -34,15 +34,18 @@ class GitHubClient:
         base_url (str): Base URL for repository API endpoints
     """
 
-    def __init__(self, owner: str, repo: str, token: str, dry_run: bool = False) -> None:
+    def __init__(self, owner: str, repo: str, token: str, dry_run: bool = False,
+                 token_refresh_callback=None) -> None:
         """
         Initialize the GitHub API client.
 
         Args:
             owner: GitHub repository owner (user or organization)
             repo: GitHub repository name
-            token: GitHub personal access token
+            token: GitHub personal access token or app installation token
             dry_run: Whether to simulate API calls without making changes
+            token_refresh_callback: Optional callable that returns a new token string.
+                Called automatically when a ghs_ token expires (401). Signature: () -> str
 
         Raises:
             ValidationError: If any required parameter is empty
@@ -58,6 +61,7 @@ class GitHubClient:
         self.repo = repo
         self.token = token
         self.dry_run = dry_run
+        self.token_refresh_callback = token_refresh_callback
 
         # Separate simulated counters for different types of GitHub objects in dry-run mode
         # GitHub issues and PRs share the same numbering space, milestones have their own
@@ -82,8 +86,33 @@ class GitHubClient:
             'User-Agent': 'Bitbucket-Migration-Tool/1.0'
         })
 
+        # Track whether we're using an app token (for auto-refresh)
+        self._is_app_token = token.startswith('ghs_')
+
         # Base URL for repository API endpoints
         self.base_url = f"https://api.github.com/repos/{owner}/{repo}"
+
+    def _refresh_token(self) -> bool:
+        """
+        Attempt to refresh an expired GitHub App installation token.
+
+        Returns:
+            True if token was refreshed, False otherwise.
+        """
+        if not self._is_app_token or not self.token_refresh_callback:
+            return False
+
+        try:
+            new_token = self.token_refresh_callback()
+            if new_token and new_token != self.token:
+                self.token = new_token
+                self.session.headers.update({'Authorization': f'token {new_token}'})
+                print("🔄 GitHub App token refreshed automatically")
+                return True
+        except Exception as e:
+            print(f"⚠️  Token refresh failed: {e}")
+
+        return False
 
     def _update_rate_limits_from_headers(self, headers: dict) -> None:
         """
@@ -210,6 +239,11 @@ class GitHubClient:
                     # Success case
                     if response.status_code < 400:
                         return response
+
+                    # Auth failure — try token refresh for app tokens
+                    if response.status_code == 401 and self._is_app_token and attempt == 0:
+                        if self._refresh_token():
+                            continue  # Retry with new token
 
                     # Rate limit error cases
                     if response.status_code in [403, 429]:
