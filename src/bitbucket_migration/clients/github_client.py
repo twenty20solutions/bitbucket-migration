@@ -71,6 +71,9 @@ class GitHubClient:
             'graphql': {'limit': 5000, 'remaining': 5000, 'reset': 0, 'used': 0}
         }
 
+        # HTTP timeout in seconds (connect, read)
+        self.request_timeout = (10, 30)
+
         # Setup authenticated session
         self.session = requests.Session()
         self.session.headers.update({
@@ -197,7 +200,8 @@ class GitHubClient:
 
             for attempt in range(max_retries + 1):
                 try:
-                    # Make the request
+                    # Make the request (with timeout to prevent hanging)
+                    kwargs.setdefault('timeout', self.request_timeout)
                     response = self.session.request(method, url, **kwargs)
 
                     # Update rate limit tracking from headers (free!)
