@@ -127,7 +127,7 @@ class SecureConfigLoader(ConfigLoader):
         if not gh_token:
             raise ValidationError("GitHub token is required. Set GITHUB_TOKEN or GITHUB_API_TOKEN in environment variables, .env file, or add to config file.")
         if not SecureConfigLoader._is_valid_github_token(gh_token):
-            raise ValidationError("Invalid GitHub token format. Expected personal access token (ghp_ or github_pat_).")
+            raise ValidationError("Invalid GitHub token format. Expected personal access token (ghp_ or github_pat_) or app installation token (ghs_).")
 
     @staticmethod
     def _is_valid_bitbucket_token(token: str) -> bool:
@@ -166,6 +166,7 @@ class SecureConfigLoader(ConfigLoader):
         Validate GitHub token format.
 
         GitHub personal access tokens start with 'ghp_' or 'github_pat_'.
+        GitHub App installation tokens start with 'ghs_'.
 
         Args:
             token: The token to validate
@@ -173,7 +174,7 @@ class SecureConfigLoader(ConfigLoader):
         Returns:
             True if valid, False otherwise
         """
-        return token.startswith('ghp_') or token.startswith('github_pat_')
+        return token.startswith('ghp_') or token.startswith('github_pat_') or token.startswith('ghs_')
 
 
 
