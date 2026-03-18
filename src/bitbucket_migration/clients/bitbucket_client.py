@@ -64,9 +64,18 @@ class BitbucketClient:
         self.token = token
         self.dry_run = dry_run
 
-        # Setup authenticated session
+        # HTTP timeout in seconds (connect, read)
+        self.request_timeout = (10, 30)
+
+        # Setup authenticated session with default timeout
         self.session = requests.Session()
         self.session.auth = (email, token)
+        # Monkey-patch session.request to inject default timeout
+        _original_request = self.session.request
+        def _request_with_timeout(*args, **kwargs):
+            kwargs.setdefault('timeout', self.request_timeout)
+            return _original_request(*args, **kwargs)
+        self.session.request = _request_with_timeout
 
         # Base URL for repository API endpoints
         self.base_url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{repo}"
