@@ -94,6 +94,7 @@ class OptionsConfig:
     dry_run: bool = False
     rewrite_cross_repo_links: bool = False
     request_delay_seconds: float = 1.5  # Delay between mutative API requests (GitHub recommends >= 1.0)
+    lock_bitbucket_repo: bool = False  # Add branch restrictions to block pushes/merges after migration
 
 
 @dataclass
