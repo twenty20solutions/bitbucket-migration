@@ -9,6 +9,7 @@ from typing import List, Optional
 from pathlib import Path
 import csv
 import os
+import requests as _requests
 
 from ..config.migration_config import (
     MigrationConfig,
@@ -265,6 +266,7 @@ class MigrationOrchestrator(BaseOrchestrator):
                 # Append to migration URL mapping file (for Bitbucket deletion/redirect)
                 if not self.dry_run:
                     self._append_migration_url(repo_config)
+                    self._lock_bitbucket_repo(repo_config)
 
                 self.logger.info(f"✅ Successfully performed {subcommand} for {repo_config.bitbucket_repo}")
                 self.logger.info("")
@@ -320,6 +322,70 @@ class MigrationOrchestrator(BaseOrchestrator):
             self.logger.info(f"  Appended migration URL mapping to {csv_path}")
         except Exception as e:
             self.logger.warning(f"  Could not write migration URL mapping: {e}")
+
+
+    def _lock_bitbucket_repo(self, repo_config: RepositoryConfig) -> None:
+        """
+        Lock the Bitbucket repo after successful migration.
+
+        Adds branch restrictions blocking all pushes and merges on all branches,
+        and updates the repo description to indicate it has been migrated.
+        """
+        workspace = self.config.bitbucket.workspace
+        bb_repo = repo_config.bitbucket_repo
+        gh_owner = self.config.github.owner
+        gh_repo = repo_config.github_repo
+        base_url = f"https://api.bitbucket.org/2.0/repositories/{workspace}/{bb_repo}"
+        auth = (self.config.bitbucket.email, self.config.bitbucket.token)
+
+        self.logger.info(f"  🔒 Locking Bitbucket repo {workspace}/{bb_repo}...")
+
+        try:
+            # 1. Add branch restriction: block pushes on all branches
+            resp = _requests.post(
+                f"{base_url}/branch-restrictions",
+                auth=auth,
+                json={"kind": "push", "pattern": "*", "users": [], "groups": []},
+                timeout=15
+            )
+            if resp.status_code in (200, 201):
+                self.logger.info(f"    ✓ Push restriction added (pattern: *)")
+            elif resp.status_code == 409:
+                self.logger.info(f"    ✓ Push restriction already exists")
+            else:
+                self.logger.warning(f"    ⚠️  Push restriction failed: HTTP {resp.status_code} — {resp.text[:200]}")
+
+            # 2. Add branch restriction: block merges on all branches
+            resp = _requests.post(
+                f"{base_url}/branch-restrictions",
+                auth=auth,
+                json={"kind": "restrict_merges", "pattern": "*", "users": [], "groups": []},
+                timeout=15
+            )
+            if resp.status_code in (200, 201):
+                self.logger.info(f"    ✓ Merge restriction added (pattern: *)")
+            elif resp.status_code == 409:
+                self.logger.info(f"    ✓ Merge restriction already exists")
+            else:
+                self.logger.warning(f"    ⚠️  Merge restriction failed: HTTP {resp.status_code} — {resp.text[:200]}")
+
+            # 3. Update description to mark as migrated
+            github_url = f"https://github.com/{gh_owner}/{gh_repo}"
+            resp = _requests.get(base_url, auth=auth, timeout=15)
+            if resp.status_code == 200:
+                current_desc = resp.json().get("description", "") or ""
+                if "[MIGRATED" not in current_desc:
+                    new_desc = f"[MIGRATED TO GITHUB — {github_url}] {current_desc}".strip()
+                    _requests.put(base_url, auth=auth, json={"description": new_desc}, timeout=15)
+                    self.logger.info(f"    ✓ Description updated with migration notice")
+                else:
+                    self.logger.info(f"    ✓ Description already has migration notice")
+
+            self.logger.info(f"  🔒 Bitbucket repo locked")
+
+        except Exception as e:
+            self.logger.warning(f"  ⚠️  Could not lock Bitbucket repo: {e}")
+            self.logger.warning(f"      Migration was successful — lock can be applied manually later")
 
 
 class CrossLinkOrchestrator(BaseOrchestrator):
